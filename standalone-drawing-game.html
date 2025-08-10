@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guess & Build - Collaborative Drawing Game</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .lucide {
+            width: 1em;
+            height: 1em;
+            stroke: currentColor;
+            stroke-width: 2;
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo } = React;
+        
+        // Lucide Icons as inline SVG components
+        const Palette = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/>
+                <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/>
+                <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/>
+                <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
+                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
+            </svg>
+        );
+
+        const Square = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <rect width="18" height="18" x="3" y="3" rx="2"/>
+            </svg>
+        );
+
+        const Eraser = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/>
+                <path d="M22 21H7"/>
+                <path d="m5 11 9 9"/>
+            </svg>
+        );
+
+        const RotateCcw = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+            </svg>
+        );
+
+        const Download = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7,10 12,15 17,10"/>
+                <line x1="12" x2="12" y1="15" y2="3"/>
+            </svg>
+        );
+
+        const Eye = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                <circle cx="12" cy="12" r="3"/>
+            </svg>
+        );
+
+        const Grid3X3 = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <rect width="18" height="18" x="3" y="3" rx="2"/>
+                <path d="M9 3v18"/>
+                <path d="M15 3v18"/>
+                <path d="M3 9h18"/>
+                <path d="M3 15h18"/>
+            </svg>
+        );
+
+        const MessageSquare = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+        );
+
+        const History = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M12 7v5l4 2"/>
+            </svg>
+        );
+
+        const Play = () => (
+            <svg className="lucide" viewBox="0 0 24 24">
+                <polygon points="6,3 20,12 6,21"/>
+            </svg>
+        );
+
+        const GRID_SIZE = 20;
+        const COLORS = [
+            '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00',
+            '#FF00FF', '#00FFFF', '#FFA500', '#800080', '#FFC0CB', '#A52A2A',
+            '#808080', '#008000', '#000080', '#800000', '#008080', '#C0C0C0'
+        ];
+
+        const STORAGE_KEY = 'collaborativeDrawing';
+        const HISTORY_KEY = 'drawingHistory';
+
+        const CollaborativeDrawing = () => {
+            // Initialize grid with white background
+            const [grid, setGrid] = useState(() => {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    return JSON.parse(saved);
+                }
+                return Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill('#FFFFFF'));
+            });
+            
+            const [selectedColor, setSelectedColor] = useState('#000000');
+            const [history, setHistory] = useState(() => {
+                const saved = localStorage.getItem(HISTORY_KEY);
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [undoHistory, setUndoHistory] = useState([]);
+            const [undoIndex, setUndoIndex] = useState(-1);
+            const [showGrid, setShowGrid] = useState(true);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [selectedPixels, setSelectedPixels] = useState(new Set());
+            const [isSelecting, setIsSelecting] = useState(false);
+            const [showHistory, setShowHistory] = useState(false);
+            const [currentDescription, setCurrentDescription] = useState('');
+            const [showDescriptionModal, setShowDescriptionModal] = useState(false);
+            
+            // Save to localStorage
+            useEffect(() => {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(grid));
+            }, [grid]);
+            
+            useEffect(() => {
+                localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+            }, [history]);
+            
+            // Add to undo history
+            const addToUndoHistory = useCallback((newGrid) => {
+                setUndoHistory(prev => {
+                    const newHistory = prev.slice(0, undoIndex + 1);
+                    newHistory.push(JSON.parse(JSON.stringify(newGrid)));
+                    return newHistory.slice(-20);
+                });
+                setUndoIndex(prev => Math.min(prev + 1, 19));
+            }, [undoIndex]);
+            
+            const paintPixel = useCallback((row, col) => {
+                if (grid[row][col] !== selectedColor) {
+                    const newGrid = [...grid];
+                    newGrid[row] = [...newGrid[row]];
+                    newGrid[row][col] = selectedColor;
+                    
+                    addToUndoHistory(grid);
+                    setGrid(newGrid);
+                }
+            }, [grid, selectedColor, addToUndoHistory]);
+            
+            const paintSelectedPixels = useCallback(() => {
+                if (selectedPixels.size === 0) return;
+                
+                addToUndoHistory(grid);
+                const newGrid = [...grid];
+                
+                selectedPixels.forEach(pixelKey => {
+                    const [row, col] = pixelKey.split('-').map(Number);
+                    if (newGrid[row] && newGrid[row][col] !== undefined) {
+                        newGrid[row] = [...newGrid[row]];
+                        newGrid[row][col] = selectedColor;
+                    }
+                });
+                
+                setGrid(newGrid);
+                setSelectedPixels(new Set());
+            }, [grid, selectedPixels, selectedColor, addToUndoHistory]);
+            
+            const handlePixelClick = useCallback((row, col) => {
+                const pixelKey = `${row}-${col}`;
+                
+                if (isSelecting) {
+                    setSelectedPixels(prev => {
+                        const newSet = new Set(prev);
+                        if (newSet.has(pixelKey)) {
+                            newSet.delete(pixelKey);
+                        } else {
+                            newSet.add(pixelKey);
+                        }
+                        return newSet;
+                    });
+                } else {
+                    paintPixel(row, col);
+                }
+            }, [isSelecting, paintPixel]);
+            
+            const handleMouseDown = useCallback((row, col) => {
+                if (!isSelecting) {
+                    setIsDrawing(true);
+                    paintPixel(row, col);
+                }
+            }, [isSelecting, paintPixel]);
+            
+            const handleMouseEnter = useCallback((row, col) => {
+                if (isDrawing && !isSelecting) {
+                    paintPixel(row, col);
+                }
+            }, [isDrawing, isSelecting, paintPixel]);
+            
+            const handleMouseUp = useCallback(() => {
+                setIsDrawing(false);
+            }, []);
+            
+            const undo = useCallback(() => {
+                if (undoIndex >= 0) {
+                    setGrid(JSON.parse(JSON.stringify(undoHistory[undoIndex])));
+                    setUndoIndex(prev => prev - 1);
+                }
+            }, [undoHistory, undoIndex]);
+            
+            const clearCanvas = useCallback(() => {
+                if (confirm('Are you sure you want to clear the canvas?')) {
+                    const newGrid = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill('#FFFFFF'));
+                    addToUndoHistory(grid);
+                    setGrid(newGrid);
+                }
+            }, [grid, addToUndoHistory]);
+            
+            const saveToHistory = useCallback(() => {
+                setShowDescriptionModal(true);
+            }, []);
+            
+            const confirmSave = useCallback(() => {
+                const newEntry = {
+                    id: Date.now(),
+                    grid: JSON.parse(JSON.stringify(grid)),
+                    description: currentDescription || 'Untitled Creation',
+                    timestamp: new Date().toLocaleString()
+                };
+                
+                setHistory(prev => [newEntry, ...prev.slice(0, 19)]);
+                setCurrentDescription('');
+                setShowDescriptionModal(false);
+            }, [grid, currentDescription]);
+            
+            const loadFromHistory = useCallback((entry) => {
+                addToUndoHistory(grid);
+                setGrid(JSON.parse(JSON.stringify(entry.grid)));
+                setShowHistory(false);
+            }, [grid, addToUndoHistory]);
+            
+            const exportCanvas = useCallback(() => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const pixelSize = 20;
+                
+                canvas.width = GRID_SIZE * pixelSize;
+                canvas.height = GRID_SIZE * pixelSize;
+                
+                for (let i = 0; i < GRID_SIZE; i++) {
+                    for (let j = 0; j < GRID_SIZE; j++) {
+                        ctx.fillStyle = grid[i][j];
+                        ctx.fillRect(j * pixelSize, i * pixelSize, pixelSize, pixelSize);
+                    }
+                }
+                
+                const link = document.createElement('a');
+                link.download = 'collaborative-drawing.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            }, [grid]);
+            
+            return React.createElement('div', {
+                className: "min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 relative overflow-hidden"
+            }, [
+                // Animated Background
+                React.createElement('div', {
+                    key: 'bg',
+                    className: "absolute inset-0 opacity-20"
+                }, [
+                    React.createElement('div', {
+                        key: 'bg1',
+                        className: "absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl animate-pulse"
+                    }),
+                    React.createElement('div', {
+                        key: 'bg2',
+                        className: "absolute top-3/4 right-1/4 w-96 h-96 bg-cyan-500 rounded-full mix-blend-multiply filter blur-3xl animate-pulse delay-1000"
+                    }),
+                    React.createElement('div', {
+                        key: 'bg3',
+                        className: "absolute bottom-1/4 left-1/2 w-96 h-96 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl animate-pulse delay-2000"
+                    })
+                ]),
+                
+                // Main Content
+                React.createElement('div', {
+                    key: 'main',
+                    className: "max-w-7xl mx-auto relative z-10"
+                }, [
+                    // Header
+                    React.createElement('div', {
+                        key: 'header',
+                        className: "text-center mb-8"
+                    }, [
+                        React.createElement('h1', {
+                            key: 'title',
+                            className: "text-5xl font-black bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-2"
+                        }, "Guess & Build"),
+                        React.createElement('p', {
+                            key: 'subtitle',
+                            className: "text-slate-300 text-lg font-medium"
+                        }, "Draw something amazing, let others guess what it is!")
+                    ]),
+                    
+                    // Main layout
+                    React.createElement('div', {
+                        key: 'layout',
+                        className: "flex flex-col xl:flex-row gap-8"
+                    }, [
+                        // Canvas section
+                        React.createElement('div', {
+                            key: 'canvas-section',
+                            className: "flex-1"
+                        }, [
+                            React.createElement('div', {
+                                key: 'canvas-container',
+                                className: "bg-slate-800/50 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-slate-700/50"
+                            }, [
+                                React.createElement('div', {
+                                    key: 'canvas',
+                                    className: "grid gap-1 mx-auto border-4 border-slate-600/50 rounded-2xl overflow-hidden shadow-2xl bg-white p-2",
+                                    style: {
+                                        gridTemplateColumns: `repeat(${GRID_SIZE}, 1fr)`,
+                                        maxWidth: '600px',
+                                        aspectRatio: '1'
+                                    },
+                                    onMouseUp: handleMouseUp,
+                                    onMouseLeave: handleMouseUp
+                                }, grid.map((row, i) =>
+                                    row.map((color, j) => {
+                                        const pixelKey = `${i}-${j}`;
+                                        const isSelected = selectedPixels.has(pixelKey);
+                                        
+                                        return React.createElement('div', {
+                                            key: pixelKey,
+                                            className: `aspect-square cursor-pointer transition-all duration-150 rounded-sm ${
+                                                isSelected ? 'ring-2 ring-cyan-400 ring-offset-1 ring-offset-white scale-95' : 'hover:scale-110'
+                                            } ${showGrid ? 'border border-slate-200/30' : ''}`,
+                                            style: { 
+                                                backgroundColor: color,
+                                                minWidth: '20px',
+                                                minHeight: '20px'
+                                            },
+                                            onClick: () => handlePixelClick(i, j),
+                                            onMouseDown: () => handleMouseDown(i, j),
+                                            onMouseEnter: () => handleMouseEnter(i, j)
+                                        });
+                                    })
+                                ).flat()),
+                                
+                                selectedPixels.size > 0 && React.createElement('div', {
+                                    key: 'paint-selected',
+                                    className: "mt-4 flex justify-center"
+                                }, React.createElement('button', {
+                                    onClick: paintSelectedPixels,
+                                    className: "bg-gradient-to-r from-cyan-500 to-purple-500 text-white font-bold py-3 px-6 rounded-2xl hover:from-cyan-600 hover:to-purple-600 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
+                                }, `Paint ${selectedPixels.size} Selected Pixels`))
+                            ])
+                        ]),
+                        
+                        // Controls section
+                        React.createElement('div', {
+                            key: 'controls',
+                            className: "w-full xl:w-96 space-y-6"
+                        }, [
+                            // Color Palette
+                            React.createElement('div', {
+                                key: 'palette',
+                                className: "bg-slate-800/50 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-slate-700/50"
+                            }, [
+                                React.createElement('div', {
+                                    key: 'palette-header',
+                                    className: "flex items-center gap-3 mb-4"
+                                }, [
+                                    React.createElement('div', {
+                                        key: 'palette-icon',
+                                        className: "p-2 bg-gradient-to-r from-pink-500 to-purple-500 rounded-xl"
+                                    }, React.createElement(Palette, { key: 'icon' })),
+                                    React.createElement('h3', {
+                                        key: 'palette-title',
+                                        className: "font-bold text-white text-lg"
+                                    }, "Color Palette")
+                                ]),
+                                
+                                React.createElement('div', {
+                                    key: 'colors',
+                                    className: "grid grid-cols-6 gap-3 mb-4"
+                                }, COLORS.map(color =>
+                                    React.createElement('button', {
+                                        key: color,
+                                        className: `w-10 h-10 rounded-xl border-2 transition-all duration-200 transform hover:scale-110 ${
+                                            selectedColor === color 
+                                                ? 'border-cyan-400 scale-110 shadow-lg shadow-cyan-400/50' 
+                                                : 'border-slate-600 hover:border-slate-400'
+                                        }`,
+                                        style: { backgroundColor: color },
+                                        onClick: () => setSelectedColor(color)
+                                    })
+                                )),
+                                
+                                React.createElement('div', {
+                                    key: 'selected-color',
+                                    className: "bg-slate-700/50 rounded-2xl p-4 flex items-center gap-3"
+                                }, [
+                                    React.createElement(Square, { key: 'icon' }),
+                                    React.createElement('span', {
+                                        key: 'text',
+                                        className: "text-slate-300 font-medium"
+                                    }, "Selected Color:"),
+                                    React.createElement('div', {
+                                        key: 'color-preview',
+                                        className: "w-8 h-8 border-2 border-slate-600 rounded-lg shadow-inner",
+                                        style: { backgroundColor: selectedColor }
+                                    })
+                                ])
+                            ])
+                        ])
+                    ]),
+                    
+                    // Footer
+                    React.createElement('div', {
+                        key: 'footer',
+                        className: "text-center mt-12 space-y-4"
+                    }, [
+                        React.createElement('p', {
+                            key: 'game-title',
+                            className: "text-slate-300 text-lg font-medium"
+                        }, "🎨 The Ultimate Guessing Game 🎯"),
+                        React.createElement('div', {
+                            key: 'description',
+                            className: "max-w-3xl mx-auto text-slate-400 space-y-2"
+                        }, [
+                            React.createElement('p', {
+                                key: 'how-it-works'
+                            }, [
+                                React.createElement('strong', {
+                                    key: 'bold',
+                                    className: "text-slate-300"
+                                }, "How it works:"),
+                                " Draw something awesome, describe what you made, then let the next person guess! They can either try to figure out your creation or build something completely new on top of it."
+                            ]),
+                            React.createElement('p', {
+                                key: 'persistence'
+                            }, "Your pixel art persists for everyone to see, guess, and build upon. Every creation becomes part of an evolving collaborative masterpiece!"),
+                            React.createElement('p', {
+                                key: 'tip',
+                                className: "text-cyan-400 font-medium"
+                            }, "💡 Pro tip: Use multi-select mode to paint multiple pixels at once with the same color!")
+                        ])
+                    ])
+                ])
+            ]);
+        };
+
+        // Render the app
+        ReactDOM.render(React.createElement(CollaborativeDrawing), document.getElementById('root'));
+    </script>
+</body>
+</html>
